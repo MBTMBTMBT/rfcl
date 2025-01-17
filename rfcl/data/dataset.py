@@ -18,6 +18,10 @@ def get_states_dataset(demo_dataset_path, skip_failed=True, num_demos: int = -1,
     demo_dataset = h5py.File(demo_dataset_path)
     with open(demo_dataset_path.replace(".h5", ".json"), "r") as f:
         demo_dataset_meta = json.load(f)
+    print("======demo_dataset_meta:======")
+    print(demo_dataset_meta)
+    print("======demo_dataset_meta['episodes']:======")
+    print(demo_dataset_meta["episodes"])
     if num_demos == -1:
         num_demos = len(demo_dataset_meta["episodes"])
     load_count = 0
@@ -25,7 +29,7 @@ def get_states_dataset(demo_dataset_path, skip_failed=True, num_demos: int = -1,
         np.random.shuffle(demo_dataset_meta["episodes"])
     for episode in demo_dataset_meta["episodes"]:
         # NOTE (stao): MS3 dataset stores success elsewhere
-        if not episode["success"] and skip_failed:
+        if not episode["info"]["success"] and skip_failed:
             continue
         demo_id = episode["episode_id"]
         demo = demo_dataset[f"traj_{demo_id}"]

@@ -116,13 +116,16 @@ def make_env(
         clip_wrapper = lambda x: gymnasium.wrappers.ClipAction(x)
         wrappers = [ContinuousTaskWrapper, SparseRewardWrapper, EpisodeStatsWrapper, rescale_action_wrapper, clip_wrapper, *wrappers]
         if _mani_skill3.is_mani_skill3_env(env_id):
+            print("Is mani skill 3 env")
             env_factory = _mani_skill3.env_factory
             context = "forkserver"  # currently ms3 does not work with fork
         elif _mani_skill2.is_mani_skill2_env(env_id):
+            print("Is mani skill 2 env")
             env_factory = _mani_skill2.env_factory
 
             context = "forkserver"  # currently ms2 does not work with fork
         elif _gymnasium_robotics.is_gymnasium_robotics_env(env_id):
+            print("Is gymnasium robotics env")
             from rfcl.envs.maze.test_maze import PointMazeTestEnv
 
             def env_factory(env_id, idx, record_video_path, env_kwargs, wrappers=[], record_episode_kwargs=dict()):
@@ -133,6 +136,7 @@ def make_env(
                 return _init
 
         elif _meta_world.is_meta_world_env(env_id):
+            print("Is meta world env")
 
             def env_factory(env_id, idx, record_video_path, env_kwargs, wrappers=[], record_episode_kwargs=dict()):
                 def _init():

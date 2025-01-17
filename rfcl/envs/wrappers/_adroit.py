@@ -24,8 +24,10 @@ from rfcl.utils.visualization import (
 
 class AdroitInitialStateWrapper(InitialStateWrapper):
     def set_env_state(self, state):
+        # print("1. have we got here?")
         env: AdroitHandDoorEnv = self.env.unwrapped
         if isinstance(env, AdroitHandRelocateEnv):
+            # print("2. have we got here?")
             # fix bug where Mujoco env cannot set state correctly in Relocate when there is close contact with ball
             # very strange error but I believe it may be due to the lower fidelity simulation Adroit envs have
             qp = state["qpos"]

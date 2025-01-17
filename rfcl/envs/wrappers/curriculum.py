@@ -127,11 +127,19 @@ class InitialStateWrapper(gymnasium.Wrapper):
         state_info = self.states_dataset[demo_id]
         obs, info = self.env.reset(**copy.deepcopy(state_info["reset_kwargs"]))
         self.demo_states = state_info["state"]
+        # print("======'state'======")
+        # print(len(self.demo_states[0]))
+        # print(state_info["reset_kwargs"])
 
         # sample a start step
         metadata = self.demo_metadata[demo_id]
         start_step = self._state_rng.choice(metadata.start_steps, p=metadata.start_steps_density)
-        self.set_env_state(self.demo_states[start_step])
+        _demo_states = {}
+        _demo_states["door_body_pos"] = self.demo_states[start_step][0:3]
+        _demo_states["qpos"] = self.demo_states[start_step][3:33]
+        _demo_states["qvel"] = self.demo_states[start_step][33:63]
+        # self.set_env_state(self.demo_states[start_step])
+        self.set_env_state(_demo_states)
 
         # retrieve the actual new observation which we reset to
         obs = self.get_env_obs()
