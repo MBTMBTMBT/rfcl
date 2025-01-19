@@ -134,6 +134,8 @@ class InitialStateWrapper(gymnasium.Wrapper):
         # sample a start step
         metadata = self.demo_metadata[demo_id]
         start_step = self._state_rng.choice(metadata.start_steps, p=metadata.start_steps_density)
+        # print(metadata.start_steps)
+        # print(metadata.start_steps_density)
         _demo_states = {}
         _demo_states["door_body_pos"] = self.demo_states[start_step][0:3]
         _demo_states["qpos"] = self.demo_states[start_step][3:33]
