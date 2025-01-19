@@ -156,6 +156,7 @@ def main(cfg: SACExperiment):
             env_cfg.action_scale = demo_replay_dataset.action_scale.tolist()
             eval_env_cfg.action_scale = env_cfg.action_scale
     InitialStateWrapper = get_initial_state_wrapper(cfg.env.env_id)
+    print(InitialStateWrapper)
     np.random.seed(cfg.seed)
     wrappers = [
         lambda env: InitialStateWrapper(
