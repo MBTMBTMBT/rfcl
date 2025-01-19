@@ -38,6 +38,8 @@ class AdroitInitialStateWrapper(InitialStateWrapper):
             diff = env.model.body_pos[env.obj_body_id] - env.data.xpos[env.obj_body_id]
             env.model.body_pos[env.obj_body_id] = state["obj_pos"] + diff
             return env.set_state(qp, qv)
+        # print("3. have we got here?")
+        # print(type(env))
         return env.set_env_state(state)
 
     def get_env_obs(self):
