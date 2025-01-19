@@ -128,6 +128,8 @@ class SAC(BasePolicy):
         if self.jax_env:
             self._env_step = jax.jit(self._env_step, static_argnames=["seed"])
 
+        self.ac = ac
+
     @partial(jax.jit, static_argnames=["self", "seed"])
     def _sample_action(self, rng_key, actor: DiagGaussianActor, env_obs, seed=False):
         if seed:
@@ -145,6 +147,47 @@ class SAC(BasePolicy):
             rng_key, env_rng_key = jax.random.split(rng_key, 2)
             data, loop_state = self.loop.rollout([env_rng_key], loop_state, actor, partial(self._sample_action, seed=seed), 1)
         return loop_state, data
+
+    def test_on_demonstrations(self):
+        """
+        Test the current policy on all demonstration trajectories by iterating over all states
+        and printing the state, demonstration actions, and predicted action distributions.
+        """
+        # 检查环境是否是向量化的，并获取内部子环境的数量
+        if not hasattr(self.env, "call"):
+            raise ValueError("The environment does not support 'call' method. Ensure you are using AsyncVectorEnv.")
+
+        num_envs = self.env.num_envs
+        print(f"Number of sub-environments: {num_envs}")
+
+        # 获取演示数据
+        trajectories = self.env.states_dataset
+        print("Testing on demonstration trajectories...")
+
+        for demo_id, demo_data in trajectories.items():
+            print(f"Demo ID: {demo_id}")
+            demo_states = demo_data["state"]
+
+            for step_idx, state in enumerate(demo_states):
+                # 构造适合子环境的状态
+                _demo_states = {
+                    "door_body_pos": state[0:3],
+                    "qpos": state[3:33],
+                    "qvel": state[33:63],
+                }
+
+                # 遍历每个子环境并设置状态
+                for env_idx in range(num_envs):
+                    print(f"Setting state in sub-environment {env_idx} for step {step_idx}")
+                    self.env.call("set_env_state", _demo_states)
+
+                    # 获取当前观测
+                    obs = self.env.call("get_env_obs")[env_idx]
+
+                    # 使用当前观测获取动作分布
+                    action_distribution = self.ac.get_action_distribution(obs)
+                    print(f"Step {step_idx}, State: {_demo_states}")
+                    print(f"Predicted Action Distribution: {action_distribution}")
 
     def train(self, rng_key: PRNGKey, steps: int, callback_fn=None, verbose=1):
         """
@@ -194,6 +237,7 @@ class SAC(BasePolicy):
                     params=self.state.ac.actor,
                     apply_fn=self.state.ac.act,
                 )
+                self.test_on_demonstrations()
                 eval_data = {
                     "return": eval_results["eval_ep_rets"], "reward": eval_results["eval_ep_avg_reward"], 
                     "episode_len": eval_results["eval_ep_lens"], "success_once": eval_results["success_once"], "success_at_end": eval_results["success_at_end"]
