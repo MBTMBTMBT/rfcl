@@ -161,51 +161,39 @@ class ActorCritic:
         """Sample actions from distribution"""
         return actor(obs).sample(seed=rng_key), {}
 
-    def get_action_distribution(self, obs, temperature=1.0):
+    @partial(jax.jit)
+    def get_action_distribution(self, rng_key: PRNGKey, actor: DiagGaussianActor, obs):
         """
         Get the action distribution for a given observation.
 
         Parameters:
+        - rng_key: PRNG key for randomness.
+        - actor: The actor model (DiagGaussianActor instance).
         - obs: Observation input, can be [batch_size, obs_dim] or [obs_dim].
-        - temperature: Scaling factor for the standard deviation, default is 1.0.
 
         Returns:
         - A dictionary containing the action distribution with keys:
-          - "mean": Mean of the distribution (NumPy array).
-          - "std": Standard deviation of the distribution (NumPy array).
+          - "mean": Mean of the distribution (JAX array).
+          - "std": Standard deviation of the distribution (JAX array).
         """
-        import jax.numpy as jnp
-        import numpy as np
-
         # Ensure input observation has a batch dimension
         if len(obs.shape) == 1:
             obs = obs[None, :]  # Expand to [1, obs_dim]
 
-        # Convert observation to JAX array
-        obs = jnp.array(obs)
+        # Forward pass through the actor to get the distribution
+        dist = actor(obs)
 
-        # Use the apply method to get the distribution from the actor model
-        params = self.actor.params  # Assume self.actor contains the initialized model parameters
-        dist = self.actor.model.apply(params, obs, deterministic=False)
-
-        # Extract the mean
-        loc = dist.distribution.loc  # Mean of the distribution
-
-        # Convert the scale to a concrete array
+        # Extract mean and standard deviation
+        mean = dist.distribution.loc
         if hasattr(dist.distribution.scale, "to_dense"):
-            scale = dist.distribution.scale.to_dense()  # Convert LinearOperatorDiag to a dense matrix
+            std = dist.distribution.scale.to_dense()  # Convert LinearOperatorDiag to dense array
         else:
-            scale = dist.distribution.scale  # If it's already a concrete array
+            std = dist.distribution.scale
 
-        # Apply temperature adjustment
-        scale = scale * temperature
-
-        # Convert to NumPy for output
-        action_distribution = {
-            "mean": np.array(loc),
-            "std": np.array(scale),
+        return {
+            "mean": mean,
+            "std": std,
         }
-        return action_distribution
 
     def state_dict(self):
         return dict(

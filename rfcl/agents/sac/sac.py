@@ -133,6 +133,8 @@ class SAC(BasePolicy):
 
         self.demo_replay_dataset = demo_replay_dataset
 
+        # self.previous_predictions = {}  # Maps demo_id and index to previous predictions
+
     @partial(jax.jit, static_argnames=["self", "seed"])
     def _sample_action(self, rng_key, actor: DiagGaussianActor, env_obs, seed=False):
         if seed:
@@ -153,38 +155,98 @@ class SAC(BasePolicy):
 
     def test_on_demonstrations(self):
         """
-        Test the current policy on all demonstration trajectories by iterating over all states
-        and printing the state, demonstration actions, and predicted action distributions.
+        Test the current policy on all demonstration trajectories by iterating over all states,
+        calculating KL divergences, L1 distances, and comparing predictions with previous results.
         """
-        if not hasattr(self.demo_replay_dataset, "trajectory_boundaries"):
-            raise ValueError(
-                "ReplayDataset does not contain trajectory boundaries. Please ensure the dataset is properly initialized.")
+        # Ensure the environment is vectorized
+        if not hasattr(self.env, "call"):
+            raise ValueError("The environment does not support 'call' method. Ensure you are using AsyncVectorEnv.")
 
-        boundaries = self.demo_replay_dataset.trajectory_boundaries
-        actions = self.demo_replay_dataset.data["action"]
-        observations = self.demo_replay_dataset.data["env_obs"]
+        # Default action distribution: uniform over action space
+        action_dim = self.demo_replay_dataset.data["action"].shape[1]
+        default_action_mean = jnp.zeros(action_dim)
+        default_action_std = jnp.ones(action_dim)  # Assuming unit variance for the default
 
-        print("Testing on demonstration trajectories...")
+        # Trajectories from the dataset
+        trajectories = self.demo_replay_dataset.data
+        num_demos = len(self.demo_replay_dataset.eps_ids)
+        demo_results = []
 
-        for i in range(len(boundaries) - 1):
-            start_idx, end_idx = boundaries[i], boundaries[i + 1]
-            print(f"Demo {i + 1}: Trajectory from index {start_idx} to {end_idx}")
+        for demo_id in range(num_demos):
+            # Extract the trajectory's actions and observations
+            start_idx = demo_id * self.demo_replay_dataset.size // num_demos
+            end_idx = (demo_id + 1) * self.demo_replay_dataset.size // num_demos
+            observations = trajectories["env_obs"][start_idx:end_idx]
+            actions_demo = trajectories["action"][start_idx:end_idx]
 
-            for step in range(start_idx, end_idx):
-                obs = observations[step]
-                demo_action = actions[step]
+            kl_demo_pred_sum = 0.0
+            kl_pred_default_sum = 0.0
+            kl_demo_default_sum = 0.0
+            l1_demo_pred_sum = 0.0
 
-                # Convert demo action to a distribution (assuming a deterministic distribution here)
-                demo_action_distribution = {"mean": demo_action, "std": np.zeros_like(demo_action)}
+            for idx, (obs, demo_action) in enumerate(zip(observations, actions_demo)):
+                # Get predicted action distribution
+                action_distribution_pred = self.state.ac.get_action_distribution(self.state.rng_key, self.state.ac.actor, obs)
+                pred_mean = action_distribution_pred["mean"][0]  # Extract the single-action batch result
+                pred_std = action_distribution_pred["std"][0]
 
-                # Predict action distribution
-                action_distribution = self.ac.get_action_distribution(obs)
+                # Get demonstration action as a distribution (assume delta function around demo_action)
+                demo_mean = demo_action
+                demo_std = jnp.full_like(demo_action, 1e-6)  # Small variance for stability
 
-                # Print results
-                print(f"Step {step - start_idx}:")
-                print(f"Observation: {obs}")
-                print(f"Demo Action Distribution: {demo_action_distribution}")
-                print(f"Predicted Action Distribution: {action_distribution}")
+                # Calculate KL divergences
+                def kl_divergence(mean1, std1, mean2, std2):
+                    std1 = jnp.clip(std1, 1e-10, None)
+                    std2 = jnp.clip(std2, 1e-10, None)
+                    return jnp.sum(
+                        jnp.log(std2 / std1) + (std1 ** 2 + (mean1 - mean2) ** 2) / (2 * std2 ** 2) - 0.5
+                    )
+
+                kl_demo_pred = kl_divergence(demo_mean, demo_std, pred_mean, pred_std)
+                kl_pred_default = kl_divergence(pred_mean, pred_std, default_action_mean, default_action_std)
+                kl_demo_default = kl_divergence(demo_mean, demo_std, default_action_mean, default_action_std)
+
+                # Calculate L1 distance between predicted and demonstration actions
+                l1_demo_pred = jnp.sum(jnp.abs(pred_mean - demo_mean))
+
+                # # Compare with previous predictions
+                # previous_pred = self.previous_predictions.get((demo_id, idx))
+                # if previous_pred is not None:
+                #     l1_change = jnp.sum(jnp.abs(pred_mean - previous_pred))
+                #     print(f"Demo {demo_id}, Step {idx}: L1 change since last test: {l1_change:.4f}")
+                # else:
+                #     print(f"Demo {demo_id}, Step {idx}: No previous prediction available.")
+                #
+                # # Store the current prediction
+                # self.previous_predictions[(demo_id, idx)] = pred_mean
+
+                # Sum up metrics for the trajectory
+                kl_demo_pred_sum += kl_demo_pred
+                kl_pred_default_sum += kl_pred_default
+                kl_demo_default_sum += kl_demo_default
+                l1_demo_pred_sum += l1_demo_pred
+
+            # Append results for the demo trajectory
+            demo_results.append({
+                "demo_id": demo_id,
+                "kl_demo_pred": float(kl_demo_pred_sum),
+                "kl_pred_default": float(kl_pred_default_sum),
+                "kl_demo_default": float(kl_demo_default_sum),
+                "l1_demo_pred": float(l1_demo_pred_sum),
+            })
+
+            # Store results in logger
+            self.logger.store(
+                tag=f"demo_{demo_id}",
+                kl_demo_pred=float(kl_demo_pred_sum),
+                kl_pred_default=float(kl_pred_default_sum),
+                kl_demo_default=float(kl_demo_default_sum),
+                l1_demo_pred=float(l1_demo_pred_sum),
+            )
+
+        # Log results globally
+        self.logger.log(self.state.total_env_steps)
+        self.logger.reset()
 
     def train(self, rng_key: PRNGKey, steps: int, callback_fn=None, verbose=1):
         """
