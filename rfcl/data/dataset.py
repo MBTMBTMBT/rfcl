@@ -119,6 +119,8 @@ class ReplayDataset:
 
         self.eps_ids = []
 
+        self.trajectory_boundaries = [0]  # Track the cumulative length of each trajectory
+
         with open(demo_dataset_path.replace(".h5", ".json"), "r") as f:
             demo_dataset_meta = json.load(f)
         if num_demos == -1:
@@ -161,6 +163,9 @@ class ReplayDataset:
             all_observations.append(obs[:-1])
             all_next_observations.append(obs[1:])
             all_actions.append(actions)
+
+            # Append trajectory boundary
+            self.trajectory_boundaries.append(self.trajectory_boundaries[-1] + len(rewards))
 
         self.data = dict(
             env_obs=np.concatenate(all_observations),

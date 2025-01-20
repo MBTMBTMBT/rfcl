@@ -236,6 +236,7 @@ def main(cfg: SACExperiment):
         ac=ac,
         logger_cfg=logger_cfg,
         cfg=cfg.sac,
+        demo_replay_dataset=demo_replay_dataset,
     )
 
     ###########################################
