@@ -164,8 +164,12 @@ class SAC(BasePolicy):
 
         # Default action distribution: uniform over action space
         action_dim = self.demo_replay_dataset.data["action"].shape[1]
-        default_action_mean = jnp.zeros(action_dim)
-        default_action_std = jnp.ones(action_dim)  # Assuming unit variance for the default
+        default_action_mean = jnp.zeros(action_dim)  # Default mean
+        default_action_std = jnp.ones(action_dim)  # Default std
+
+        # Verify the correctness of the default distribution
+        assert default_action_mean.shape[0] == action_dim, "Default mean dimensions mismatch"
+        assert default_action_std.shape[0] == action_dim, "Default std dimensions mismatch"
 
         # Trajectories from the dataset
         trajectories = self.demo_replay_dataset.data
@@ -179,6 +183,7 @@ class SAC(BasePolicy):
             observations = trajectories["env_obs"][start_idx:end_idx]
             actions_demo = trajectories["action"][start_idx:end_idx]
 
+            # Initialize accumulators
             kl_demo_pred_sum = 0.0
             kl_pred_default_sum = 0.0
             kl_demo_default_sum = 0.0
@@ -194,33 +199,25 @@ class SAC(BasePolicy):
                 demo_mean = demo_action
                 demo_std = jnp.full_like(demo_action, 1e-6)  # Small variance for stability
 
-                # Calculate KL divergences
-                def kl_divergence(mean1, std1, mean2, std2):
-                    std1 = jnp.clip(std1, 1e-10, None)
-                    std2 = jnp.clip(std2, 1e-10, None)
-                    return jnp.sum(
-                        jnp.log(std2 / std1) + (std1 ** 2 + (mean1 - mean2) ** 2) / (2 * std2 ** 2) - 0.5
+                # Calculate KL divergences (per-dimension)
+                def kl_divergence_per_dim(mean1, std1, mean2, std2):
+                    std1 = jnp.clip(std1, 1e-10, None)  # Avoid division by 0
+                    std2 = jnp.clip(std2, 1e-10, None)  # Avoid division by 0
+                    return (
+                            jnp.log(std2 / std1) +
+                            (std1 ** 2 + (mean1 - mean2) ** 2) / (2 * std2 ** 2) - 0.5
                     )
 
-                kl_demo_pred = kl_divergence(demo_mean, demo_std, pred_mean, pred_std)
-                kl_pred_default = kl_divergence(pred_mean, pred_std, default_action_mean, default_action_std)
-                kl_demo_default = kl_divergence(demo_mean, demo_std, default_action_mean, default_action_std)
+                kl_demo_pred = kl_divergence_per_dim(demo_mean, demo_std, pred_mean, pred_std).mean()
+                kl_pred_default = kl_divergence_per_dim(pred_mean, pred_std, default_action_mean,
+                                                        default_action_std).mean()
+                kl_demo_default = kl_divergence_per_dim(demo_mean, demo_std, default_action_mean,
+                                                        default_action_std).mean()
 
                 # Calculate L1 distance between predicted and demonstration actions
                 l1_demo_pred = jnp.sum(jnp.abs(pred_mean - demo_mean))
 
-                # # Compare with previous predictions
-                # previous_pred = self.previous_predictions.get((demo_id, idx))
-                # if previous_pred is not None:
-                #     l1_change = jnp.sum(jnp.abs(pred_mean - previous_pred))
-                #     print(f"Demo {demo_id}, Step {idx}: L1 change since last test: {l1_change:.4f}")
-                # else:
-                #     print(f"Demo {demo_id}, Step {idx}: No previous prediction available.")
-                #
-                # # Store the current prediction
-                # self.previous_predictions[(demo_id, idx)] = pred_mean
-
-                # Sum up metrics for the trajectory
+                # Accumulate metrics for the trajectory
                 kl_demo_pred_sum += kl_demo_pred
                 kl_pred_default_sum += kl_pred_default
                 kl_demo_default_sum += kl_demo_default
