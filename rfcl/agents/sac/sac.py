@@ -156,7 +156,7 @@ class SAC(BasePolicy):
     def test_on_demonstrations(self):
         """
         Test the current policy on all demonstration trajectories by iterating over all states,
-        calculating KL divergences, symmetric KL, L1 distances, and entropy, and storing results in the logger.
+        calculating KL divergences, symmetric KL, L1 distances, entropy, and mean predicted std, and storing results in the logger.
         """
         # Ensure the environment is vectorized
         if not hasattr(self.env, "call"):
@@ -186,6 +186,7 @@ class SAC(BasePolicy):
             symmetric_kl_sum = 0.0
             l1_demo_pred_sum = 0.0
             pred_entropy_sum = 0.0
+            mean_pred_std_sum = 0.0
 
             for idx, (obs, demo_action) in enumerate(zip(observations, actions_demo)):
                 # Get predicted action distribution
@@ -195,9 +196,9 @@ class SAC(BasePolicy):
                 pred_std = action_distribution_pred["std"][0]
 
                 # Ensure no std is too small or invalid
-                pred_std = jnp.clip(pred_std, 1e-3, None)
+                pred_std = jnp.clip(pred_std, 1e-10, None)  # Avoid numerical issues
                 demo_std = jnp.full_like(demo_action, 1e-3)  # Small fixed variance for stability
-                default_std = jnp.clip(default_action_std, 1e-3, None)
+                default_std = jnp.clip(default_action_std, 1e-10, None)
 
                 # Calculate KL divergences (per-dimension)
                 def kl_divergence_per_dim(mean1, std1, mean2, std2):
@@ -206,10 +207,10 @@ class SAC(BasePolicy):
                             (std1 ** 2 + (mean1 - mean2) ** 2) / (2 * std2 ** 2) - 0.5
                     )
 
-                kl_demo_pred = kl_divergence_per_dim(demo_action, demo_std, pred_mean, pred_std).sum()
-                kl_pred_demo = kl_divergence_per_dim(pred_mean, pred_std, demo_action, demo_std).sum()
-                kl_pred_default = kl_divergence_per_dim(pred_mean, pred_std, default_action_mean, default_std).sum()
-                kl_demo_default = kl_divergence_per_dim(demo_action, demo_std, default_action_mean, default_std).sum()
+                kl_demo_pred = kl_divergence_per_dim(demo_action, demo_std, pred_mean, pred_std).mean()
+                kl_pred_demo = kl_divergence_per_dim(pred_mean, pred_std, demo_action, demo_std).mean()
+                kl_pred_default = kl_divergence_per_dim(pred_mean, pred_std, default_action_mean, default_std).mean()
+                kl_demo_default = kl_divergence_per_dim(demo_action, demo_std, default_action_mean, default_std).mean()
 
                 # Symmetric KL
                 symmetric_kl = 0.5 * (kl_demo_pred + kl_pred_demo)
@@ -218,7 +219,11 @@ class SAC(BasePolicy):
                 l1_demo_pred = jnp.sum(jnp.abs(pred_mean - demo_action))
 
                 # Calculate entropy of the predicted distribution
-                pred_entropy = -jnp.sum(jnp.log(pred_std * jnp.sqrt(2 * jnp.pi * jnp.e)))
+                pred_entropy = jnp.sum(0.5 * (1 + jnp.log(2 * jnp.pi) + 2 * jnp.log(pred_std)))
+
+                # Accumulate mean predicted std (per trajectory)
+                mean_pred_std = jnp.mean(pred_std)  # Average over all dimensions
+                mean_pred_std_sum += mean_pred_std
 
                 # Accumulate metrics for the trajectory
                 kl_demo_pred_sum += kl_demo_pred
@@ -237,6 +242,7 @@ class SAC(BasePolicy):
                 "symmetric_kl": float(symmetric_kl_sum),
                 "l1_demo_pred": float(l1_demo_pred_sum),
                 "pred_entropy": float(pred_entropy_sum),
+                "mean_pred_std": float(mean_pred_std_sum),
             })
 
             # Store results in logger
@@ -248,6 +254,7 @@ class SAC(BasePolicy):
                 symmetric_kl=float(symmetric_kl_sum),
                 l1_demo_pred=float(l1_demo_pred_sum),
                 pred_entropy=float(pred_entropy_sum),
+                mean_pred_std=float(mean_pred_std_sum),
             )
 
         # Log results globally
